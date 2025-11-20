@@ -48,6 +48,21 @@ export default function ChatPage() {
             setConversations(data);
             if (data.length > 0) {
               selectConversation(data[0].id);
+            } else {
+              // Auto-create first conversation if none exist
+              const { data: newConv, error: createError } = await supabase
+                .from("conversations")
+                .insert({
+                  user_id: userId,
+                  title: "New Chat",
+                })
+                .select()
+                .single();
+
+              if (!createError && newConv) {
+                setConversations([newConv]);
+                selectConversation(newConv.id);
+              }
             }
           }
         } catch (error) {
@@ -135,8 +150,38 @@ export default function ChatPage() {
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!input.trim() || loading || !currentConversationId) {
+    if (!input.trim() || loading) {
       return;
+    }
+
+    // Ensure we have a conversation
+    if (!currentConversationId) {
+      console.log("No conversation ID, creating one first");
+      if (!user) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from("conversations")
+          .insert({
+            user_id: user.id,
+            title: "New Chat",
+          })
+          .select()
+          .single();
+
+        if (error || !data) {
+          console.error("Failed to create conversation:", error);
+          alert("Failed to create conversation. Please try again.");
+          return;
+        }
+        
+        setConversations([data, ...conversations]);
+        setCurrentConversationId(data.id);
+      } catch (error) {
+        console.error("Error creating conversation:", error);
+        alert("Error creating conversation");
+        return;
+      }
     }
 
     const userMessage = input;
@@ -156,15 +201,21 @@ export default function ChatPage() {
 
       const data = await response.json();
 
+      if (!response.ok) {
+        console.error("API error:", data);
+        alert("Error: " + (data.error || "Failed to send message"));
+        return;
+      }
+
       if (response.ok) {
         setMessages([
           ...messages,
           { id: "user-" + Date.now(), content: userMessage, role: "user" },
           {
-            id: data.message.id,
-            content: data.message.content,
+            id: data.message?.id || "assistant-" + Date.now(),
+            content: data.message?.content || data.response || "Response generated",
             role: "assistant",
-            metadata: data.message.metadata,
+            metadata: data.message?.metadata,
           },
         ]);
 
@@ -184,6 +235,7 @@ export default function ChatPage() {
       }
     } catch (error) {
       console.error("Error sending message:", error);
+      alert("Error: " + (error instanceof Error ? error.message : "Unknown error"));
     } finally {
       setLoading(false);
     }
